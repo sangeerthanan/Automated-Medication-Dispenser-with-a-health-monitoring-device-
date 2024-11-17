@@ -1,0 +1,127 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <DHTesp.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+
+#define DHT_PIN 15
+
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+
+WiFiUDP ntpUDP;
+
+NTPClient timeClient(ntpUDP);
+
+
+char tempAr[6];
+char ldrDataAr[9];
+char humidityAr[11];
+
+const char *ssid = "moto g(20)";
+const char *password = "Thanan123";
+
+
+
+DHTesp dhtSensor;
+
+
+
+void setupWifi();
+
+void setup() {
+  Serial.begin(115200);
+  setupWifi();
+  setupMqtt();
+
+  dhtSensor.setup(DHT_PIN, DHTesp::DHT22);
+
+
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+  }
+  timeClient.begin();
+  timeClient.setTimeOffset(5.5 * 3600);
+
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+
+
+  if (!mqttClient.connected()) {
+    connectToBroker();
+  }
+  mqttClient.loop();
+  updateTemperature();
+  Serial.println(humidityAr);
+  Serial.println(tempAr);
+  mqttClient.publish("ENTC-HEALTH-TEMP", tempAr);
+  mqttClient.publish("ENTC-HEALTH-HUMI", humidityAr);
+  delay(1000);
+}
+
+
+void setupMqtt() {
+  mqttClient.setServer("test.mosquitto.org", 1883);
+  mqttClient.setCallback(receviveCallback);
+}
+
+void receviveCallback(char *topic, byte *payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("]");
+
+  char payloadCharAr[length];
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+    payloadCharAr[i] = (char)payload[i];
+  }
+  Serial.println();
+}
+
+
+void connectToBroker() {
+  while (!mqttClient.connected()) {
+    Serial.print("AttemptingMQTTConnection...");
+    if (mqttClient.connect("ESP32-212120012121")) {
+      Serial.println("connected");
+      mqttClient.subscribe("ENTC-ADMIN-MAIN-ON-OFF");
+      mqttClient.subscribe("ENTC-ADMIN-SCH-ON");
+    } else {
+      Serial.print("Failed");
+      Serial.print(mqttClient.state());
+      delay(5000);
+    }
+  }
+}
+unsigned long getTime() {
+  timeClient.update();
+  return timeClient.getEpochTime();
+}
+void updateTemperature() {
+  TempAndHumidity data = dhtSensor.getTempAndHumidity();
+  String(data.temperature, 2).toCharArray(tempAr, 6);
+  String(data.humidity, 2).toCharArray(humidityAr, 11);
+}
+
+
+void setupWifi() {
+  Serial.println();
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println("WIFI CONNECTED");
+  Serial.println("IP address:");
+  Serial.println(WiFi.localIP());
+}
