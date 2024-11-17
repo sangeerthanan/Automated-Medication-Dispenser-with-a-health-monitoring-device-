@@ -1,0 +1,627 @@
+// import libraries
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHTesp.h>
+#include <WiFi.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <PubSubClient.h>
+#include <ESP32Servo.h>
+
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64 // in pixel
+#define OLED_RESET -1 // reset pin
+#define SCREEN_ADDRESS 0x3C  //I2c adress
+
+#define BUZZER 5
+#define LED_1 15
+#define PB_CANCEL 34
+#define PB_OK 32
+#define PB_UP 33
+#define PB_DOWN 35
+#define DHTPIN 27
+#define LED_2 16
+#define LED_3 17
+#define AO_PIN 39
+#define PIN_Servo 4
+#define PIN_Servo1 13
+#define PIN_Servo2 14
+#define PIN_Servo3 25
+#define PIN_Servo4 26
+
+
+#define NTP_SERVER     "pool.ntp.org"
+const long utcOffsetInSeconds = 19800;  // UTC+5:30
+const int daylightOffsetInSeconds = 0;
+
+
+//create object of oled display
+
+// global variable
+int days=0;
+int hours=0;
+int minutes=0;
+int seconds=0;
+
+unsigned long timeNow = 0;
+unsigned long timeLast = 0;
+
+bool alarm_enabled = true;
+int n_alarms = 3; // can set a any number of alarms by change this value
+int alarm_hours[] = {0,1,3}; // setted for only 3 alarms
+int alarm_minutes[] = {1,10,3};// setted for only 3 alarms
+bool alarm_triggered[] = {false,false, false}; //considering if alarm is ringged or not
+
+//buzzer ringing notes 
+int n_notes = 8;
+int C = 262;
+int D = 294;
+int E = 330;
+int F = 349;
+int G = 392;
+int A = 440;
+int B = 494;
+int C_H = 523;
+int notes[] = {C, D, E, F, G, A, B, C_H};
+
+int lightValue;
+
+
+int current_mode= 0;//current option
+int max_mode = 5; // maximum number of options
+String modes[] = {"1-set Alerm1", "2-Set Alarm 2", "3-Set Alarm 3","4-Set Alarm 4", "5-Disable Alarm"};
+long utc_offset_sec = 0; 
+
+const char *ssid = "moto g(20)";
+const char *password = "Thanan123";
+ float gammaFactor = 0.75;
+const char* gammaTopic = "ENTC-ADMIN-GAMMA";
+bool isScheduledON = false;
+unsigned long scheduledOnTime;
+char tempAr[6];
+char humidityAr[11];
+char ldrDataAr[9];
+Servo myServo;
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+DHTesp dhtSensor; // create object for DHT22 sensor
+WiFiClient espClient;
+WiFiUDP ntpUDP;  // Create a WiFiUDP instance
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds); 
+PubSubClient mqttClient(espClient);
+NetworkServer server(80); 
+void setupWifi();
+void updateTemperature();
+void setupServo();
+void receiveCallback(char* topic, byte* payload, unsigned int length);
+Servo servo1, servo2, servo3, servo4;
+
+void setup() {
+  // put your setup code here, to run once:
+  //Pinmode() is a function used to set a specific pin as either an input or an output
+  pinMode(BUZZER, OUTPUT);
+  pinMode(LED_1,OUTPUT);
+  pinMode(PB_CANCEL, INPUT);
+  pinMode(PB_OK, INPUT);
+  pinMode(PB_UP, INPUT);
+  pinMode(PB_DOWN, INPUT);
+  pinMode(LED_2,OUTPUT);
+  pinMode(LED_3,OUTPUT);
+  servo1.attach(PIN_Servo1);  // Set appropriate pins
+  servo2.attach(PIN_Servo2);
+  servo3.attach(PIN_Servo3);
+  servo4.attach(PIN_Servo4);
+
+  //initialize the sensor
+  dhtSensor.setup(DHTPIN, DHTesp::DHT22);
+ myServo.attach(PIN_Servo);
+  Serial.begin(115200);
+   Serial.println("Setup started...");
+  // initializing OLED display
+  if(! display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  
+  // Turn on the oled display
+  display.display();
+  delay(500);
+  
+   WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    display.clearDisplay();
+    print_line("Connecting to WIFI",0,0,2);
+    
+  }
+
+  display.clearDisplay();
+  print_line("Connected to WIFI",0,0,2);
+
+  timeClient.begin();
+  timeClient.setTimeOffset(utcOffsetInSeconds);
+
+  configTime(utcOffsetInSeconds, daylightOffsetInSeconds, NTP_SERVER);
+
+ 
+  
+  // Clear the display
+  display.clearDisplay();
+
+  // custom the display
+  print_line("Welcome to the Medibox", 10,20 ,1);
+  delay(500);
+  display.clearDisplay();
+   Serial.println(WiFi.localIP());
+  
+      setupMqtt();
+
+}
+
+
+
+
+void loop() {
+  
+  // put your main code here, to run repeatedly:
+  // this speeds up the simulation
+  update_time_with_check_alarm();  
+    mqttClient.loop();
+    updateTemperature();
+    setupServo();
+     lightValue = analogRead(AO_PIN);
+    print_LDR_value();
+    check_temp();
+  //checking the state of the button
+  if (digitalRead(PB_OK)== LOW){
+    delay(200);
+    go_to_menu();
+  }
+if (!mqttClient.connected()) {
+    connectToBroker();
+  }
+  
+  
+  Serial.println(ldrDataAr);
+  Serial.println(tempAr);
+  mqttClient.publish("ENTC-ADMIN-TEMP", tempAr);
+  mqttClient.publish("ENTC-ADMIN-HUMI", humidityAr);
+  mqttClient.publish("ENTC-ADMIN-LDR", ldrDataAr);
+}
+
+// Respobile of this function is print on OLED display
+void print_line(String text, int column, int row, int text_size){
+
+  display.setTextSize(text_size);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(column, row);
+  display.println(text); //set the row value and column value
+
+  display.display();
+}
+
+//printing days,hours,minutes and the days on OLED display
+void print_time_now(void){
+  display.clearDisplay();
+  delay(100);
+  /*print_line(String(days),0,0,2);
+  print_line(":",20,0,2);*/
+  print_line(String(hours),30,0,2);
+  print_line(":",50,0,2);
+  print_line(String(minutes),60,0,2);
+  print_line(":",80,0,2);
+  print_line(String(seconds),90,0,2);
+}
+
+/// function ensures that the global variables representing the current time are synchronized with the actual local time
+
+void update_time() {
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    hours = timeinfo.tm_hour;
+    minutes = timeinfo.tm_min;
+    seconds = timeinfo.tm_sec;
+    days = timeinfo.tm_yday;
+    Serial.printf("Time updated: %02d:%02d:%02d\n", hours, minutes, seconds);
+  }
+}
+
+
+// Function responsible for how alrm ringing(buzzer) until user turn off the alarm
+void ring_alarm(int alarmNumber){ 
+  display.clearDisplay();
+  print_line("MEDICINE TIME!", 0, 0, 2);
+  digitalWrite(LED_1, HIGH); // LED bulb light up while alarm is ringing
+
+  // Rotate the specific servo motor based on the alarm number
+  switch(alarmNumber) {
+    case 0:
+      servo1.write(180); // Rotate servo1
+      break;
+    case 1:
+      servo2.write(180); // Rotate servo2
+      break;
+    case 2:
+      servo3.write(180); // Rotate servo3
+      break;
+    case 3:
+      servo4.write(180); // Rotate servo4
+      break;
+  }
+
+  bool break_happened = false;
+  while (break_happened == false && digitalRead(PB_CANCEL) == HIGH) { // check if alarm is turned off
+    for(int i = 0; i < n_notes; i++) {
+      if (digitalRead(PB_CANCEL) == LOW) {
+        delay(200);
+        break_happened = true;
+        break;
+      }
+      tone(BUZZER, notes[i]); // Buzzer ringing
+      delay(500);
+      noTone(BUZZER);
+      delay(2);
+    }
+  }
+
+  digitalWrite(LED_1, LOW); // Turn off LED after the alarm
+  display.clearDisplay();
+
+  switch(alarmNumber) {
+    case 0:
+      servo1.write(0); // Reset servo1 to 0 degrees
+      break;
+    case 1:
+      servo2.write(0); // Reset servo2 to 0 degrees
+      break;
+    case 2:
+      servo3.write(0); // Reset servo3 to 0 degrees
+      break;
+    case 3:
+      servo4.write(0); // Reset servo4 to 0 degrees
+      break;
+  }
+}
+
+
+
+
+
+//Alarm checking with time
+// this function is responsible for ringing the alarm when time reaches to the alarm time
+//And also this function check if the alarms are dissable or not before it ringing
+void update_time_with_check_alarm(){
+  update_time(); // retrieves the current time 
+  print_time_now(); // display the current time
+  
+  if (alarm_enabled == true){  // checking weather alarm disable or not
+    for(int i=0; i < n_alarms ; i++){
+      if (alarm_triggered[i] == false && alarm_hours[i] ==hours && alarm_minutes[i] ==minutes ){ // checking conditions  for alarm ring
+        ring_alarm(i);
+        alarm_triggered[i] =true;
+      }
+    }
+  }
+}
+
+
+// The responsible of this function is to inform about user press button to the system.
+int wait_for_button_press(){
+  while (true){ // while loop add for check continuously whether button is pressed or not
+    if (digitalRead(PB_UP)==LOW){
+      delay(200);
+      return PB_UP;
+    }
+    else if (digitalRead(PB_DOWN)==LOW){
+      delay(200);
+      return PB_DOWN;
+    }
+    else if (digitalRead(PB_OK)==LOW){
+      delay(200);
+      return PB_OK;
+    }
+    else if (digitalRead(PB_CANCEL)==LOW){
+      delay(200);
+      return PB_CANCEL;
+    }
+
+    update_time();
+  }
+}
+
+
+//menu function
+//defining menu behaviour
+//function manages the navigation through a menu system by handling button presses and updating the current mode accordingly.
+void go_to_menu(){
+  while(digitalRead(PB_CANCEL)== HIGH){ //running until PB_CANCEL button pressed
+    display.clearDisplay();
+    print_line(modes[current_mode],0,0,2);
+
+    int pressed = wait_for_button_press();
+    
+    if(pressed == PB_UP){  //If (PB_UP) is pressed, it increments the current_mode variable
+      delay(200);
+      current_mode += 1;
+      current_mode = current_mode % max_mode;
+    }
+
+    else if(pressed == PB_DOWN){ // If (PB_DOWN) is pressed, it decrements the current_mode variable 
+      delay(200);
+      current_mode -= 1;
+      if(current_mode < 0 ){
+        current_mode = max_mode -1;
+      }
+    }
+
+    else if(pressed == PB_OK){ // If (PB_OK) is pressed, it calls the run_mode function with the current mode
+      delay(200);
+      //Serial.print(current_mode);
+      run_mode(current_mode);
+    }
+
+    else if(pressed == PB_CANCEL){ //break function when PB_CANCEL button is pressed
+      delay(200);
+      break;
+    }
+
+  }  
+}
+
+
+
+
+
+
+//set the alarm
+// This function resposible for set the alrm hours and minutes 
+void set_alarm(int alarm){
+  // when disable option select , then all alarm cancled.if user wants to set alarm again after that alarm_enabled should equals to true otherwise alarm doesn't set
+  alarm_enabled = true; 
+
+  int temp_hour = alarm_hours[alarm];
+
+  while(true){
+    display.clearDisplay();
+    print_line("Enter hour: "+String(temp_hour),0,0,2);
+
+    int pressed = wait_for_button_press();
+
+    if(pressed == PB_UP){ //if PB_UP button pressed alarm hours increase one by one
+      delay(200);
+      temp_hour += 1;
+      temp_hour = temp_hour % 24; //maximum value of alarm hour is 23
+
+    }
+
+    else if(pressed == PB_DOWN){
+      delay(200);
+      temp_hour -= 1; //if PB_DOWN button pressed alarm hours decrease one by one
+      if(temp_hour < 0 ){ // alarm hours cannot be negetive ,minimum value is 0 and maximum value is 23
+        temp_hour = 23;
+      }
+    }
+
+
+    else if(pressed == PB_OK){
+      delay(200);
+      alarm_hours[alarm] = temp_hour;//set alarm hour store in alarm hours array
+      break;
+    }
+
+    else if(pressed == PB_CANCEL){
+      delay(200);
+      break;
+    }
+
+  }
+
+  int temp_minute = alarm_minutes[alarm];
+  while(true){
+    display.clearDisplay();
+    print_line("Enter minute: "+String(temp_minute),0,0,2);
+
+    int pressed = wait_for_button_press();
+    if(pressed == PB_UP){ //if PB_UP button pressed alarm minutes increase one by one
+      delay(200);
+      temp_minute += 1;
+      temp_minute = temp_minute % 60; // maximum value of minute is XX:59 (XX means hours)
+
+    }
+
+    else if(pressed == PB_DOWN){  //if PB_DOWN button pressed alarm minutes dicrease one by one
+      delay(200);
+      temp_minute -= 1;
+      if(temp_minute < 0 ){
+        temp_minute = 59; 
+      }
+    }
+
+
+    else if(pressed == PB_OK){
+      delay(200);
+      alarm_minutes[alarm] = temp_minute; //set alarm minute store in alarm minutes array
+      alarm_triggered[alarm] = false;
+      break;
+    }
+
+    else if(pressed == PB_CANCEL){
+      delay(200);
+      break;
+    }
+  }
+  display.clearDisplay();
+  print_line("Alarm is set",0,0,2);
+  delay(1000);
+}  
+
+
+// set the time zone .......................................................
+//This function is responsible for show the time according to the user input time zone
+
+
+
+// this function responsible for coordinating different operational modes of the system, handling configuration settings, and managing alarms
+void run_mode(int mode){
+  if(mode == 0){
+    set_alarm(0); // Because frist option shold be select time zone
+  }
+
+  if (mode == 1 || mode == 2|| mode == 3){ // this mode is for select the alarm and set the time for the alarm.
+    set_alarm(mode-1);
+  }
+
+  else if(mode == 4){
+    alarm_enabled = false; // when alarm_enable = flase ,alarm dosent ring because conditions doesn't satisfy in update_time_with_check_alarm() function
+    display.clearDisplay();
+    print_line("All Alrms Are Disabled",4,0,2); // show the message when user select dissable all alarm function
+    delay(500);
+  }
+}
+
+void setupMqtt() {
+  mqttClient.setServer("test.mosquitto.org", 1883);
+  mqttClient.setCallback(receiveCallback);
+}
+
+void receiveCallback(char *topic, byte *payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("]");
+
+  char payloadCharAr[length + 1];
+  for (unsigned int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+    payloadCharAr[i] = (char)payload[i];
+  }
+  payloadCharAr[length] = '\0';
+  Serial.println();
+  
+  if (strcmp(topic, "ENTC-ADMIN-MAIN-ON-OFF") == 0) {
+    buzzerOn(payloadCharAr[0] == '1');
+  } else if (strcmp(topic, "ENTC-ADMIN-SCH-ON") == 0) {
+    if (payloadCharAr[0] == 'N') {
+      isScheduledON = false;
+    } else {
+      isScheduledON = true;
+      scheduledOnTime = atol(payloadCharAr);
+    }
+  } else if (strcmp(topic, gammaTopic) == 0) {
+    gammaFactor = atof(payloadCharAr);
+    Serial.print("Updated gamma factor: ");
+    Serial.println(gammaFactor);
+  }
+}
+void connectToBroker() {
+  while (!mqttClient.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    if (mqttClient.connect("ESP32-212120012121")) {
+      Serial.println("connected");
+      mqttClient.subscribe("ENTC-ADMIN-MAIN-ON-OFF");
+      mqttClient.subscribe("ENTC-ADMIN-SCH-ON");
+      mqttClient.subscribe(gammaTopic);
+    } else {
+      Serial.print("Failed, rc=");
+      Serial.print(mqttClient.state());
+      delay(5000);
+    }
+  }
+}
+
+void updateTemperature() {
+  TempAndHumidity data = dhtSensor.getTempAndHumidity();
+  String(data.temperature, 2).toCharArray(tempAr, 6);
+  String(data.humidity, 2).toCharArray(humidityAr, 11);
+  print_line(String("Humidity:") + humidityAr, 0, 40, 1);
+  print_line(String("Temperature:") + tempAr, 0, 50, 1);
+   }
+
+void print_LDR_value() {
+  display.display();
+    String(lightValue).toCharArray(ldrDataAr, 9);
+  print_line(String("LDR VALUE:" ) + ldrDataAr, 0, 30, 1);
+}
+// create a temperature and huidity checking  function
+// This function is responsible for checking temperature and humidity and inform user if those condition are not in better ranges
+// There is message show in the OLED display and turn on the LED light up , If conditions are bad
+void check_temp(){
+  TempAndHumidity data = dhtSensor.getTempAndHumidity();
+  if(data.temperature>32){ // set what happen temperature greater than it maximum value
+    display.clearDisplay();
+    print_line("TEMP HIGH", 0, 40,1); //LED light up when temp high
+    digitalWrite(LED_2, HIGH);
+    
+  }
+  if(data.temperature<35){ //set what happen temperature lower than it minimum value
+    display.clearDisplay();
+    print_line("TEMP LOW", 0, 40,1); //LED light up when tempurature is low
+    digitalWrite(LED_2, HIGH);
+    
+  }
+  if(data.temperature>35 && data.temperature<32 ){ 
+    digitalWrite(LED_2, LOW); // keeping turn off LED lightinting when temperature is in better range 
+    
+  }
+  if(data.humidity>80){  // set what happen humidity greater than it maximum value
+    display.clearDisplay();
+    print_line("HUMIDITY HIGH", 0, 50,1); //LED light up when humidity high
+    digitalWrite(LED_3, HIGH);
+    
+  }
+  if(data.humidity<60){ //set what happen humidity lower than it minimum value
+    display.clearDisplay();
+    print_line("HUMIDITY LOW", 0, 40,1); //LED light up when humidity is low
+    digitalWrite(LED_3, HIGH);
+    
+  }
+  if(data.humidity>60 && data.humidity < 80 ){
+    digitalWrite(LED_3, LOW); // keeping turn off LED lightinting when humidity is in better range 
+    
+  }
+}
+unsigned long getTime() {
+  timeClient.update();
+  return timeClient.getEpochTime();
+}
+void checkSchedule() {
+  if (isScheduledON) {
+    unsigned long currentTime = getTime();
+    if (currentTime > scheduledOnTime) {
+      buzzerOn(true);
+      isScheduledON = false;
+      Serial.println("Scheduled ON");
+    }
+  }
+}
+void buzzerOn(bool on) {
+  if (on) {
+    tone(BUZZER,256);
+  } else {
+    noTone(BUZZER);
+  }
+}
+void setupServo() {
+  float lightIntensity = analogRead(AO_PIN) / 4095.0; // Normalize the LDR value to range 0-1
+  int angle = 180 * lightIntensity * gammaFactor; // Calculate the servo angle
+  myServo.write(angle); // Set the servo to the calculated angle
+  Serial.print("LDR Value: ");
+  Serial.print(lightIntensity);
+  Serial.print(" => Servo Angle: ");
+  Serial.println(angle);
+}
+
+void setupWifi() {
+    Serial.println();
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println("WIFI CONNECTED");
+  Serial.println("IP address:");
+  Serial.println(WiFi.localIP());
+}
