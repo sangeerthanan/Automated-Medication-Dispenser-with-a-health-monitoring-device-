@@ -1,4 +1,4 @@
-# Health Monitoring Device with a Smart Medibox
+# Health Monitoring Device with a Automated Medication Dispenser
 
 This repository contains the code and documentation for a **Health Monitoring Device with a Smart Medibox**. The system integrates multiple sensors and actuators to monitor patient health, communicate data to a doctor, and manage a medication schedule with alerts and alarms.
 
