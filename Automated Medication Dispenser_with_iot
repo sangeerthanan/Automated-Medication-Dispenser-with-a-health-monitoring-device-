@@ -65,7 +65,7 @@ String modes[] = {"1-set Alerm1", "2-Set Alarm 2", "3-Set Alarm 3","4-Set Alarm 
 long utc_offset_sec = 0; 
 
 const char *ssid = "moto g(20)";
-const char *password = "Thanan123";
+const char *password = "*********";
 WiFiClient espClient;
 WiFiUDP ntpUDP;  // Create a WiFiUDP instance
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);  // Initialize NTPClient
