@@ -5,7 +5,7 @@ This repository contains the code and documentation for a **Health Monitoring De
 ## Features
 - **Health Monitoring**: Collects patient data using temperature sensors and a MAX30102 sensor for heart rate and SpO2.
 - **Remote Communication**: Sends health data to a doctor using Node-RED and MQTT protocol.
-- **Smart Medibox**: Alerts the patient for medication with a buzzer, LEDs, and an alarm.
+- **Automated Medication Dispenser**: Alerts the patient for medication with a buzzer, LEDs, and an alarm.
 - **Storage Monitoring**: Maintains optimal temperature, humidity, and light conditions for medication.
 - **Real-Time Clock (RTC)**: Ensures precise timing for alarms and notifications.
 - **Alarm Button**: Allows manual configuration of alarms.
