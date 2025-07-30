@@ -1,5 +1,5 @@
 # Automated Medication Dispenser with a Health Monitoring Device  
-This repository contains the code and documentation for a **Automated Medication Dispenser with a Health Monitoring Device **. The system integrates multiple sensors and actuators to monitor patient health, communicate data to a doctor, and manage a medication schedule with alerts and alarms.
+This repository contains the code and documentation for a **Automated Medication Dispenser with a Health Monitoring Device**. The system integrates multiple sensors and actuators to monitor patient health, communicate data to a doctor, and manage a medication schedule with alerts and alarms.
 
 ## Features
 - **Health Monitoring**: Collects patient data using temperature sensors and a MAX30102 sensor for heart rate and SpO2.
